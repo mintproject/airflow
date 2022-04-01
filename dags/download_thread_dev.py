@@ -1,10 +1,9 @@
-
 from concurrent.futures import thread
 from datetime import datetime, timedelta
 from textwrap import dedent
 from airflow.models.variable import Variable
 # The DAG object; we'll need this to instantiate a DAG
-from airflow import DAG, AirflowException
+from airflow import DAG
 from airflow.models.param import Param
 from airflow.decorators import task
 # Operators; we need this to operate!
@@ -33,12 +32,7 @@ def post_query(query, endpoint, secret, variables = {}):
         "query": query,
         "variables": variables
     }, headers = {"X-Hasura-Admin-Secret": secret})
-    try:
-        response.raise_for_status()
-    except requests.exceptions.HTTPError:
-        raise AirflowException(str(response.status_code) + ":" + response.reason)
     print(response.status_code)
-    print(response.text)
     return response.json()
 
 def query_execution_function(ti, **kwargs):
@@ -168,7 +162,11 @@ def download_data_function(task_instance, **kwargs):
     source_s3.load_file(key_path, key_path, bucket_name, replace=True)
     
     link = f"https://s3.mint.isi.edu/{bucket_name}/{key_path}"
+    size = os.path.getsize(key_path) / 1024 / 1024
+    size = "{:.2f}".format(size)
     task_instance.xcom_push(key="link", value=link)
+    task_instance.xcom_push(key="size", value=size)
+
     return link
 
 with DAG(
@@ -218,12 +216,22 @@ with DAG(
         provide_context=True,
         dag=dag
     )
+    
+    import os
+    from jinja2 import Template
+    dir = os.path.abspath(os.path.dirname(__file__))
+    with open(f'{dir}/template_email.html.j2') as file:
+        template = Template(file.read())
+
+    output = template.render(size="{{ ti.xcom_pull(key='size') }}", link="{{ ti.xcom_pull(key='link') }}")
+
+
 
     send_email = EmailOperator( 
         task_id='send_email', 
         to="{{ params.email }}", 
-        subject='ingestion complete', 
-        html_content="{{ ti.xcom_pull(key='link') }}",
+        subject="Your MINT data is ready", 
+        html_content=output,
         dag=dag
     )
 
