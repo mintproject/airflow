@@ -12,3 +12,4 @@ COPY user_auth.py /home/airflow/.local/lib/python3.7/site-packages/airflow/api/a
 RUN  pip install airflow-code-editor black
 RUN pip install 'apache-airflow[amazon]'
 RUN pip install 'apache-airflow[sendgrid]'
+RUN pip install jupyter-repo2docker

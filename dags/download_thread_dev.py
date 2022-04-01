@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from textwrap import dedent
 from airflow.models.variable import Variable
 # The DAG object; we'll need this to instantiate a DAG
-from airflow import DAG
+from airflow import DAG, AirflowException
 from airflow.models.param import Param
 from airflow.decorators import task
 # Operators; we need this to operate!
@@ -33,7 +33,12 @@ def post_query(query, endpoint, secret, variables = {}):
         "query": query,
         "variables": variables
     }, headers = {"X-Hasura-Admin-Secret": secret})
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError:
+        raise AirflowException(str(response.status_code) + ":" + response.reason)
     print(response.status_code)
+    print(response.text)
     return response.json()
 
 def query_execution_function(ti, **kwargs):
