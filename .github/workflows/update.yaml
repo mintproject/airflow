@@ -16,6 +16,6 @@ jobs:
       - name: Set webhook deployment master-isi
         if: endsWith(github.ref, '/master')
         run: |
-          curl -f -H "webhook:${KEY}" https://webhook.node1.mint.isi.edu/hooks/ui
+          curl -f -u "webhook:${KEY}" https://webhook.node1.mint.isi.edu/hooks/dags
         env:
           KEY: ${{ secrets.WEBHOOK_PASSWORD }}
