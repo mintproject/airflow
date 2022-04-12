@@ -3,18 +3,10 @@ from datetime import datetime, timedelta
 from textwrap import dedent
 from airflow.models import Param, Variable
 # The DAG object; we'll need this to instantiate a DAG
-from airflow import DAG
+from airflow import DAG, AirflowException
 from airflow.operators.python_operator import PythonOperator, PythonVirtualenvOperator
 # Operators; we need this to operate!
 
-
-def parse_yaml_file(file_path):
-    """Parse a yaml file
-    Args:
-        file_path (str): Path to the file
-    Returns:
-        dict: Parsed yaml
-    """
 
 def repo2cwl_function(params):
     """Convert a repository to a CWL workflow
