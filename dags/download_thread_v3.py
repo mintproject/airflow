@@ -82,6 +82,31 @@ def query_execution_function(ti, **kwargs):
 
     executions = []
     response = post_query(query, params["graphql_endpoint"], Variable.get("graphql_dev_secret"), {"threadId": params["thread_id"]})
+    ti.xcom_push(key="response", value=response)
+    return response
+
+def download_file(url, directory):
+    """Download a file from a url and save it to a directory
+
+    Args:
+        url (str): The URL to download the file from
+        directory (str): The directory to save the file to
+    """
+    import requests
+    filename = url.split('/')[-1]
+    print(url)
+    r = requests.get(url, stream=True)
+    with open(directory + '/' + filename, 'wb') as f:
+        for chunk in r.iter_content(chunk_size=1024): 
+            if chunk:
+                f.write(chunk)
+                f.flush()
+
+def download_data_function(task_instance, **kwargs):
+    import os
+    params = kwargs['params']
+    response = task_instance.xcom_pull(key="response")
+
     for ex in response["data"]["execution"]:
         execution = {
             "id": ex["id"],
@@ -104,31 +129,9 @@ def query_execution_function(ti, **kwargs):
         for d in ex["results"]:
             opurl = d["resource"]["url"]
             execution["outputs"][d["model_output"]["name"]] = opurl
-        executions.append(execution)
-    ti.xcom_push(key="executions", value=executions)
-    return executions
-
-def download_file(url, directory):
-    """Download a file from a url and save it to a directory
-
-    Args:
-        url (str): The URL to download the file from
-        directory (str): The directory to save the file to
-    """
-    import requests
-    filename = url.split('/')[-1]
-    print(url)
-    r = requests.get(url, stream=True)
-    with open(directory + '/' + filename, 'wb') as f:
-        for chunk in r.iter_content(chunk_size=1024): 
-            if chunk:
-                f.write(chunk)
-                f.flush()
-
-def download_data_function(task_instance, **kwargs):
-    import os
-    params = kwargs['params']
-    executions = task_instance.xcom_pull(key="executions")
+        executions.append(execution)    
+    
+    
     directory_thread_id = params['thread_id']
     if not os.path.exists(directory_thread_id):
         os.mkdir(directory_thread_id)
@@ -172,7 +175,7 @@ def download_data_function(task_instance, **kwargs):
     return link
 
 with DAG(
-    'download_thread',
+    'download_thread_v3',
     params={
         "thread_id": Param(
             default="fSLqbaAeoGyqYuGZehbF",

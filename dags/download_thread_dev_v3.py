@@ -11,9 +11,82 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.amazon.aws.operators.s3_bucket import S3CreateBucketOperator, S3DeleteBucketOperator
 from airflow.operators.email_operator import EmailOperator
 from airflow.operators.python_operator import PythonOperator
+import json
+from typing import Tuple, List
+
 
 # Change these to your identifiers, if needed.
 AWS_S3_CONN_ID = "s3_prod"
+
+def generate_report(response : dict) -> Tuple[List[str], List[dict]] :
+    """Prepare the report from the response to be wrriten as a CSV file
+
+    Args:
+        response (dict): GraphQL reponse from the server
+
+    Returns:
+        Tuple[List[str], List[dict]]:  List of headers and list of values
+    """
+    executions = response["data"]["execution"]
+
+    #generate headers
+    headers = ["directory_mint_id"]
+    values = []
+
+    for execution in executions:
+        value_execution = {}
+        value_execution["directory_mint_id"] = execution["id"]
+        for parameter_item in execution["parameter_bindings"]:
+            parameter = parameter_item
+            value = parameter["parameter_value"]
+            name = parameter["model_parameter"]["name"]
+            if name not in headers:
+                headers.append(name)
+            value_execution[name] = value
+
+        for data_item in execution["data_bindings"]:
+            data = data_item["model_io"]
+            name = data["name"]
+            value = data_item["resource"]["name"]
+            if name not in headers:
+                headers.append(name)
+            value_execution[name] = value
+        
+        values.append(value_execution)
+
+    return headers, values
+
+def convert_csv_to_html(headers, values):
+    from prettytable import PrettyTable
+    table = PrettyTable(headers)
+    for value in values:
+        print(list(value.values()))
+        table.add_row(list(value.values()))
+    code = table.get_html_string()
+    with open("report.html", "w") as f:
+        f.write(code)
+
+def write_csv(headers: List[str], values: List[dict], directory: str, filename: str) -> str:
+    """Create a CSV file from the headers and values
+
+    Args:
+        headers (List[str]): List of headers
+        values (List[dict]): List of values
+        dir (str): Directory to write the file to
+        filename (str): Name of the file to write
+
+    Returns:
+        str: Path to the file
+    """
+    import csv
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+    with open(os.path.join(directory, filename), 'w') as file:
+        writer = csv.DictWriter(file, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(values)
+    return os.path.join(directory, filename)
 
 def convert_string(str):
     import re
@@ -82,6 +155,32 @@ def query_execution_function(ti, **kwargs):
 
     executions = []
     response = post_query(query, params["graphql_endpoint"], Variable.get("graphql_dev_secret"), {"threadId": params["thread_id"]})
+    ti.xcom_push(key="response", value=response)
+    return response
+
+def download_file(url, directory):
+    """Download a file from a url and save it to a directory
+
+    Args:
+        url (str): The URL to download the file from
+        directory (str): The directory to save the file to
+    """
+    import requests
+    filename = url.split('/')[-1]
+    print(url)
+    r = requests.get(url, stream=True)
+    with open(directory + '/' + filename, 'wb') as f:
+        for chunk in r.iter_content(chunk_size=1024): 
+            if chunk:
+                f.write(chunk)
+                f.flush()
+
+def download_data_function(task_instance, **kwargs):
+    import os
+    params = kwargs['params']
+    response = task_instance.xcom_pull(key="response")
+    executions = []
+    
     for ex in response["data"]["execution"]:
         execution = {
             "id": ex["id"],
@@ -104,39 +203,21 @@ def query_execution_function(ti, **kwargs):
         for d in ex["results"]:
             opurl = d["resource"]["url"]
             execution["outputs"][d["model_output"]["name"]] = opurl
-        executions.append(execution)
-    ti.xcom_push(key="executions", value=executions)
-    return executions
-
-def download_file(url, directory):
-    """Download a file from a url and save it to a directory
-
-    Args:
-        url (str): The URL to download the file from
-        directory (str): The directory to save the file to
-    """
-    import requests
-    filename = url.split('/')[-1]
-    print(url)
-    r = requests.get(url, stream=True)
-    with open(directory + '/' + filename, 'wb') as f:
-        for chunk in r.iter_content(chunk_size=1024): 
-            if chunk:
-                f.write(chunk)
-                f.flush()
-
-def download_data_function(task_instance, **kwargs):
-    import os
-    params = kwargs['params']
-    executions = task_instance.xcom_pull(key="executions")
+        executions.append(execution)    
+    
+    
     directory_thread_id = params['thread_id']
+    
+    headers, values = generate_report(response)
+    
     if not os.path.exists(directory_thread_id):
         os.mkdir(directory_thread_id)
     else:
         import shutil
         shutil.rmtree(directory_thread_id, ignore_errors=True)
+    write_csv(headers, values, directory_thread_id, "report.csv")
+
     for execution in executions:
-        print(execution)
         #download files
         urls = []
         execution_id = execution['id']
@@ -144,7 +225,6 @@ def download_data_function(task_instance, **kwargs):
         execution_directory = os.path.join(directory_thread_id, execution_id)
         if not os.path.exists(execution_directory):
             os.makedirs(execution_directory)
-        
         os.mkdir(os.path.join(execution_directory, "inputs"))
         os.mkdir(os.path.join(execution_directory, "outputs"))
 
@@ -158,7 +238,7 @@ def download_data_function(task_instance, **kwargs):
     shutil.make_archive(directory_thread_id, 'zip', directory_thread_id)
     key_path = f"{directory_thread_id}.zip"
     print(key_path)
-    bucket_name = "components"
+    bucket_name = "compressfiles"
     #write file
     source_s3 = S3Hook(AWS_S3_CONN_ID)
     source_s3.load_file(key_path, key_path, bucket_name, replace=True)
@@ -172,7 +252,7 @@ def download_data_function(task_instance, **kwargs):
     return link
 
 with DAG(
-    'download_thread',
+    'download_thread_dev_v3',
     params={
         "thread_id": Param(
             default="fSLqbaAeoGyqYuGZehbF",
@@ -190,6 +270,27 @@ with DAG(
             minLength=1,
             maxLength=255,
         ),
+        "problem_statement_name": Param(
+            default="",
+            type="string",
+            description="Problem Statement Name",
+            minLength=0,
+            maxLength=255,
+        ),
+        "subtask_name": Param(
+            default="",
+            type="string",
+            description="Sub task Name",
+            minLength=0,
+            maxLength=255,
+        ),
+        "subtask_url": Param(
+            default="",
+            type="string",
+            description="The url of the subtask",
+            minLength=0,
+            maxLength=255,
+        ),
     },
     default_args={
         'depends_on_past': False,
@@ -205,6 +306,7 @@ with DAG(
     start_date=datetime(2021, 1, 1),
 ) as dag:
 
+    # TASK 1: Query executions
     query_execution = PythonOperator(
         task_id='query_execution',
         python_callable=query_execution_function,
@@ -212,29 +314,58 @@ with DAG(
         dag=dag
     )
 
+    
+    # TASK 2: Send email: we are preparing the data
+    import os
+    from jinja2 import Template
+    directory = os.path.abspath(os.path.dirname(__file__))
+    
+    with open(f'{directory}/template_download_processing.html.j2') as file:
+        template_processing_message = Template(file.read())
+        processing_message = template_processing_message.render(
+            subtask_url="{{ params.subtask_url }}",
+            subtask_name="{{ params.subtask_name }}",
+            problem_statement_name="{{ params.problem_statement_name }}"
+        )
+
+    send_email_processing = EmailOperator( 
+        task_id='send_email_processing', 
+        to="{{ params.email }}", 
+        subject="Your MINT data: {{ params.problem_statement_name }} - {{ params.subtask_name }}", 
+        html_content=processing_message,
+        dag=dag
+    )
+        
+    # TASK 3: Download data, compress and upload it
+
     download_link = PythonOperator(
         task_id='download_link',
         python_callable=download_data_function,
         provide_context=True,
         dag=dag
     )
-    
-    import os
-    from jinja2 import Template
-    dir = os.path.abspath(os.path.dirname(__file__))
-    with open(f'{dir}/template_email.html.j2') as file:
-        template = Template(file.read())
 
-    output = template.render(size="{{ ti.xcom_pull(key='size') }}", link="{{ ti.xcom_pull(key='link') }}")
+        
+    # TASK 4: Send email: we are ready
 
+    with open(f'{directory}/template_download_ready.html.j2') as file:
+        template_ready_message = Template(file.read())
+        ready_message = template_ready_message.render(
+            size="{{ ti.xcom_pull(key='size') }}",
+            link="{{ ti.xcom_pull(key='link') }}",
+            subtask_url="{{ params.subtask_url }}",
+            subtask_name="{{ params.subtask_name }}",
+            problem_statement_name="{{ params.problem_statement_name }}"
+        )
 
-
-    send_email = EmailOperator( 
-        task_id='send_email', 
+    send_email_ready = EmailOperator( 
+        task_id='send_email_ready', 
         to="{{ params.email }}", 
-        subject="Your MINT data is ready", 
-        html_content=output,
+        subject="Your MINT data: {{ params.problem_statement_name }} - {{ params.subtask_name }}", 
+        html_content=ready_message,
         dag=dag
     )
+    
+    # Workflow
 
-    query_execution >> download_link >> send_email
+    query_execution >> send_email_processing >> download_link >> send_email_ready

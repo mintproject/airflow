@@ -1,6 +1,7 @@
 
 from datetime import datetime, timedelta
 from textwrap import dedent
+from airflow.models import Param
 
 # The DAG object; we'll need this to instantiate a DAG
 from airflow import DAG
@@ -19,22 +20,26 @@ with DAG(
         'retries': 1,
         'retry_delay': timedelta(minutes=5),
     },
+    params={
+        "url": Param(
+            default="https://github.com/mosoriob/MIC_model",
+            type="string"
+        ),
+    },
     description='List notebook from a git repository',
     catchup=False,
     tags=['mic'],
     start_date=datetime(2021, 1, 1),
 ) as dag:
-
+    
+     
     # t1, t2 and t3 are examples of tasks created by instantiating operators
     t1 = BashOperator(
         task_id="bash_task",
-        bash_command="git clone $git_url git_{{ run_id }}",
-        env={"git_url": '{{ dag_run.conf["url"] if dag_run else "" }}'},
+        bash_command="mkdir -p repos && git clone $git_url git_{{ run_id }} && find git_{{ run_id }} -name *.ipynb ",
+        env={"git_url": '{{ params.url if dag_run else "" }}'},
+        dag=dag,
     )
     
-    t2 = BashOperator(
-        task_id="find_notebooks",
-        bash_command="git clone $git_url",
-    )
 
     t1

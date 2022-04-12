@@ -11,9 +11,82 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.amazon.aws.operators.s3_bucket import S3CreateBucketOperator, S3DeleteBucketOperator
 from airflow.operators.email_operator import EmailOperator
 from airflow.operators.python_operator import PythonOperator
+import json
+from typing import Tuple, List
+
 
 # Change these to your identifiers, if needed.
 AWS_S3_CONN_ID = "s3_prod"
+
+def generate_report(response : dict) -> Tuple[List[str], List[dict]] :
+    """Prepare the report from the response to be wrriten as a CSV file
+
+    Args:
+        response (dict): GraphQL reponse from the server
+
+    Returns:
+        Tuple[List[str], List[dict]]:  List of headers and list of values
+    """
+    executions = response["data"]["execution"]
+
+    #generate headers
+    headers = ["directory_mint_id"]
+    values = []
+
+    for execution in executions:
+        value_execution = {}
+        value_execution["directory_mint_id"] = execution["id"]
+        for parameter_item in execution["parameter_bindings"]:
+            parameter = parameter_item
+            value = parameter["parameter_value"]
+            name = parameter["model_parameter"]["name"]
+            if name not in headers:
+                headers.append(name)
+            value_execution[name] = value
+
+        for data_item in execution["data_bindings"]:
+            data = data_item["model_io"]
+            name = data["name"]
+            value = data_item["resource"]["name"]
+            if name not in headers:
+                headers.append(name)
+            value_execution[name] = value
+        
+        values.append(value_execution)
+
+    return headers, values
+
+def convert_csv_to_html(headers, values):
+    from prettytable import PrettyTable
+    table = PrettyTable(headers)
+    for value in values:
+        print(list(value.values()))
+        table.add_row(list(value.values()))
+    code = table.get_html_string()
+    with open("report.html", "w") as f:
+        f.write(code)
+
+def write_csv(headers: List[str], values: List[dict], directory: str, filename: str) -> str:
+    """Create a CSV file from the headers and values
+
+    Args:
+        headers (List[str]): List of headers
+        values (List[dict]): List of values
+        dir (str): Directory to write the file to
+        filename (str): Name of the file to write
+
+    Returns:
+        str: Path to the file
+    """
+    import csv
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+    with open(os.path.join(directory, filename), 'w') as file:
+        writer = csv.DictWriter(file, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(values)
+    return os.path.join(directory, filename)
 
 def convert_string(str):
     import re
@@ -82,6 +155,32 @@ def query_execution_function(ti, **kwargs):
 
     executions = []
     response = post_query(query, params["graphql_endpoint"], Variable.get("graphql_dev_secret"), {"threadId": params["thread_id"]})
+    ti.xcom_push(key="response", value=response)
+    return response
+
+def download_file(url, directory):
+    """Download a file from a url and save it to a directory
+
+    Args:
+        url (str): The URL to download the file from
+        directory (str): The directory to save the file to
+    """
+    import requests
+    filename = url.split('/')[-1]
+    print(url)
+    r = requests.get(url, stream=True)
+    with open(directory + '/' + filename, 'wb') as f:
+        for chunk in r.iter_content(chunk_size=1024): 
+            if chunk:
+                f.write(chunk)
+                f.flush()
+
+def download_data_function(task_instance, **kwargs):
+    import os
+    params = kwargs['params']
+    response = task_instance.xcom_pull(key="response")
+    executions = []
+    
     for ex in response["data"]["execution"]:
         execution = {
             "id": ex["id"],
@@ -104,39 +203,21 @@ def query_execution_function(ti, **kwargs):
         for d in ex["results"]:
             opurl = d["resource"]["url"]
             execution["outputs"][d["model_output"]["name"]] = opurl
-        executions.append(execution)
-    ti.xcom_push(key="executions", value=executions)
-    return executions
-
-def download_file(url, directory):
-    """Download a file from a url and save it to a directory
-
-    Args:
-        url (str): The URL to download the file from
-        directory (str): The directory to save the file to
-    """
-    import requests
-    filename = url.split('/')[-1]
-    print(url)
-    r = requests.get(url, stream=True)
-    with open(directory + '/' + filename, 'wb') as f:
-        for chunk in r.iter_content(chunk_size=1024): 
-            if chunk:
-                f.write(chunk)
-                f.flush()
-
-def download_data_function(task_instance, **kwargs):
-    import os
-    params = kwargs['params']
-    executions = task_instance.xcom_pull(key="executions")
+        executions.append(execution)    
+    
+    
     directory_thread_id = params['thread_id']
+    
+    headers, values = generate_report(response)
+    
     if not os.path.exists(directory_thread_id):
         os.mkdir(directory_thread_id)
     else:
         import shutil
         shutil.rmtree(directory_thread_id, ignore_errors=True)
+    write_csv(headers, values, directory_thread_id, "report.csv")
+
     for execution in executions:
-        print(execution)
         #download files
         urls = []
         execution_id = execution['id']
@@ -144,7 +225,6 @@ def download_data_function(task_instance, **kwargs):
         execution_directory = os.path.join(directory_thread_id, execution_id)
         if not os.path.exists(execution_directory):
             os.makedirs(execution_directory)
-        
         os.mkdir(os.path.join(execution_directory, "inputs"))
         os.mkdir(os.path.join(execution_directory, "outputs"))
 
@@ -158,7 +238,7 @@ def download_data_function(task_instance, **kwargs):
     shutil.make_archive(directory_thread_id, 'zip', directory_thread_id)
     key_path = f"{directory_thread_id}.zip"
     print(key_path)
-    bucket_name = "components"
+    bucket_name = "compressfiles"
     #write file
     source_s3 = S3Hook(AWS_S3_CONN_ID)
     source_s3.load_file(key_path, key_path, bucket_name, replace=True)
@@ -172,7 +252,7 @@ def download_data_function(task_instance, **kwargs):
     return link
 
 with DAG(
-    'download_thread',
+    'download_thread_v2',
     params={
         "thread_id": Param(
             default="fSLqbaAeoGyqYuGZehbF",
