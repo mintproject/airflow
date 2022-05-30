@@ -42,7 +42,7 @@ def cwltool_function(params: dict):
     logger = logging.getLogger("airflow.task")
     print(logger.handlers)
     #run cwltool
-    main.run(["--enable-pull", "--debug",  "--log-dir", out_dir, "--outdir", out_dir, "./cwl.yml", "./values.json"], logger_handler=logger.handlers[0])
+    main.run(["--enable-pull", "--leave-tmpdir", "--debug",  "--log-dir", out_dir, "--outdir", out_dir, "./cwl.yml", "./values.json"], logger_handler=logger.handlers[0])
     
     #print files
     for file in os.listdir(out_dir):
