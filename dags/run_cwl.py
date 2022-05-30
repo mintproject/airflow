@@ -62,7 +62,7 @@ with DAG(
     },
     params={
         "url": Param(
-            default="https://raw.githubusercontent.com/mintproject/aquifer/master/main_ERC.cwl",
+            default="https://raw.githubusercontent.com/mintproject/airflow/master/tests/cwl/aquifer/cwl.yml",
             type="string",
         ),
         "values": Param(
