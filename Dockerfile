@@ -25,4 +25,4 @@ RUN  pip install airflow-code-editor black
 RUN pip install 'apache-airflow[amazon]'
 RUN pip install 'apache-airflow[sendgrid]'
 RUN pip install jupyter-repo2docker
-RUN mkdir -p /home/airflow/.cache/cwltool && chown -R default /home/airflow/.cache/cwltool
+RUN mkdir -p /home/airflow/.cache/cwltool && chown -R 1000 /home/airflow/.cache/cwltool
