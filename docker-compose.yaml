@@ -65,6 +65,7 @@ x-airflow-common:
     - ./plugins:/opt/airflow/plugins
     - ./airflow.cfg:/opt/airflow/airflow.cfg
     - /var/run/docker.sock:/var/run/docker.sock
+    - tmp:/tmp
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -80,6 +81,7 @@ services:
       - 8375:8375
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - tmp:/tmp
     command: tcp-listen:8375,fork,reuseaddr unix-connect:/var/run/docker.sock
   postgres:
     image: postgres:13
@@ -281,3 +283,4 @@ services:
 
 volumes:
   postgres-db-volume:
+  tmp:
