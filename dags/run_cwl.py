@@ -77,7 +77,7 @@ with DAG(
 
     cwltool_task = PythonVirtualenvOperator(
         task_id="cwltool",
-        requirements=["cwl-runner", "cwltool==3.0.20210319143721"],
+        requirements=["cwl-runner", "cwltool"],
         python_callable=cwltool_function,
         op_kwargs={"values": "{{ params.values }}", "url": "{{ params.url }}", "ds_nodash": "{{ ds_nodash }}"},
         dag=dag,
