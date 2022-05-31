@@ -8,4 +8,4 @@ parser.add_argument("values", help="values of the cwl file")
 args = parser.parse_args()
 
 
-main.run(["--enable-pull", args.spec, args.values])
+main.run(["--debug", args.spec, args.values])
