@@ -19,7 +19,6 @@ def cwltool_function(params: dict):
     import requests
     import logging
     from cwltool import main
-    
     #obtain the parameters
     values = json.loads(params["values"])
     url = params["url"]
@@ -78,7 +77,7 @@ with DAG(
 
     cwltool_task = PythonVirtualenvOperator(
         task_id="cwltool",
-        requirements=["cwl-runner", "cwltool"],
+        requirements=["cwl-runner", "cwltool==3.0.20210319143721"],
         python_callable=cwltool_function,
         op_kwargs={"values": "{{ params.values }}", "url": "{{ params.url }}", "ds_nodash": "{{ ds_nodash }}"},
         dag=dag,
