@@ -1,3 +1,3 @@
 tarfile:
   class: File
-  path: hello.tar
+  path: https://raw.githubusercontent.com/mintproject/airflow/master/tests/cwl/simple/hello.tar
